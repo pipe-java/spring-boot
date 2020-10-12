@@ -40,6 +40,7 @@ import org.springframework.boot.buildpack.platform.io.Content;
 import org.springframework.boot.buildpack.platform.io.IOConsumer;
 import org.springframework.boot.buildpack.platform.json.SharedObjectMapper;
 import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
 
 /**
  * Abstract base class for {@link HttpTransport} implementations backed by a
@@ -50,6 +51,8 @@ import org.springframework.util.Assert;
  * @author Scott Frederick
  */
 abstract class HttpClientTransport implements HttpTransport {
+
+	static final String REGISTRY_AUTH_HEADER = "X-Registry-Auth";
 
 	private final CloseableHttpClient client;
 
@@ -80,6 +83,17 @@ abstract class HttpClientTransport implements HttpTransport {
 	@Override
 	public Response post(URI uri) {
 		return execute(new HttpPost(uri));
+	}
+
+	/**
+	 * Perform a HTTP POST operation.
+	 * @param uri the destination URI
+	 * @param registryAuth registry authentication credentials
+	 * @return the operation response
+	 */
+	@Override
+	public Response post(URI uri, String registryAuth) {
+		return execute(new HttpPost(uri), registryAuth);
 	}
 
 	/**
@@ -120,6 +134,13 @@ abstract class HttpClientTransport implements HttpTransport {
 			IOConsumer<OutputStream> writer) {
 		request.setHeader(HttpHeaders.CONTENT_TYPE, contentType);
 		request.setEntity(new WritableHttpEntity(writer));
+		return execute(request);
+	}
+
+	private Response execute(HttpEntityEnclosingRequestBase request, String registryAuth) {
+		if (StringUtils.hasText(registryAuth)) {
+			request.setHeader(REGISTRY_AUTH_HEADER, registryAuth);
+		}
 		return execute(request);
 	}
 

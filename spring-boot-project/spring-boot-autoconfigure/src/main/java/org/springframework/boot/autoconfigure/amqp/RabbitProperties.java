@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Optional;
 
 import org.springframework.amqp.core.AcknowledgeMode;
+import org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.AddressShuffleMode;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory.CacheMode;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory.ConfirmType;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -88,6 +89,11 @@ public class RabbitProperties {
 	private String addresses;
 
 	/**
+	 * Mode used to shuffle configured addresses.
+	 */
+	private AddressShuffleMode addressShuffleMode = AddressShuffleMode.NONE;
+
+	/**
 	 * Requested heartbeat timeout; zero for none. If a duration suffix is not specified,
 	 * seconds will be used.
 	 */
@@ -113,6 +119,11 @@ public class RabbitProperties {
 	 * Connection timeout. Set it to zero to wait forever.
 	 */
 	private Duration connectionTimeout;
+
+	/**
+	 * Continuation timeout for RPC calls in channels. Set it to zero to wait forever.
+	 */
+	private Duration channelRpcTimeout = Duration.ofMinutes(10);
 
 	/**
 	 * Cache configuration.
@@ -279,7 +290,15 @@ public class RabbitProperties {
 	}
 
 	public void setVirtualHost(String virtualHost) {
-		this.virtualHost = "".equals(virtualHost) ? "/" : virtualHost;
+		this.virtualHost = StringUtils.hasText(virtualHost) ? virtualHost : "/";
+	}
+
+	public AddressShuffleMode getAddressShuffleMode() {
+		return this.addressShuffleMode;
+	}
+
+	public void setAddressShuffleMode(AddressShuffleMode addressShuffleMode) {
+		this.addressShuffleMode = addressShuffleMode;
 	}
 
 	public Duration getRequestedHeartbeat() {
@@ -320,6 +339,14 @@ public class RabbitProperties {
 
 	public void setConnectionTimeout(Duration connectionTimeout) {
 		this.connectionTimeout = connectionTimeout;
+	}
+
+	public Duration getChannelRpcTimeout() {
+		return this.channelRpcTimeout;
+	}
+
+	public void setChannelRpcTimeout(Duration channelRpcTimeout) {
+		this.channelRpcTimeout = channelRpcTimeout;
 	}
 
 	public Cache getCache() {

@@ -28,14 +28,13 @@ import java.util.Random;
 import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.TaskOutcome;
 import org.junit.jupiter.api.TestTemplate;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 
 import org.springframework.boot.buildpack.platform.docker.DockerApi;
 import org.springframework.boot.buildpack.platform.docker.type.ImageName;
 import org.springframework.boot.buildpack.platform.docker.type.ImageReference;
-import org.springframework.boot.gradle.junit.GradleCompatibilityExtension;
+import org.springframework.boot.gradle.junit.GradleCompatibility;
 import org.springframework.boot.gradle.testkit.GradleBuild;
 import org.springframework.boot.testsupport.testcontainers.DisabledIfDockerUnavailable;
 
@@ -47,7 +46,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * @author Andy Wilkinson
  * @author Scott Frederick
  */
-@ExtendWith(GradleCompatibilityExtension.class)
+@GradleCompatibility
 @DisabledIfDockerUnavailable
 class BootBuildImageIntegrationTests {
 
@@ -127,6 +126,40 @@ class BootBuildImageIntegrationTests {
 	}
 
 	@TestTemplate
+	void buildsImageWithPullPolicy() throws IOException {
+		writeMainClass();
+		writeLongNameResource();
+		String projectName = this.gradleBuild.getProjectDir().getName();
+		ImageReference imageReference = ImageReference.of(ImageName.of(projectName));
+
+		BuildResult result = this.gradleBuild.build("bootBuildImage", "--pullPolicy=ALWAYS");
+		assertThat(result.task(":bootBuildImage").getOutcome()).isEqualTo(TaskOutcome.SUCCESS);
+		assertThat(result.getOutput()).contains("Pulled builder image").contains("Pulled run image");
+		try (GenericContainer<?> container = new GenericContainer<>(imageReference.toString())) {
+			container.waitingFor(Wait.forLogMessage("Launched\\n", 1)).start();
+		}
+
+		result = this.gradleBuild.build("bootBuildImage", "--pullPolicy=IF_NOT_PRESENT");
+		assertThat(result.task(":bootBuildImage").getOutcome()).isEqualTo(TaskOutcome.SUCCESS);
+		assertThat(result.getOutput()).doesNotContain("Pulled builder image").doesNotContain("Pulled run image");
+		try (GenericContainer<?> container = new GenericContainer<>(imageReference.toString())) {
+			container.waitingFor(Wait.forLogMessage("Launched\\n", 1)).start();
+		}
+		finally {
+			new DockerApi().image().remove(imageReference, false);
+		}
+	}
+
+	@TestTemplate
+	void failsWithLaunchScript() {
+		writeMainClass();
+		writeLongNameResource();
+		BuildResult result = this.gradleBuild.buildAndFail("bootBuildImage");
+		assertThat(result.task(":bootBuildImage").getOutcome()).isEqualTo(TaskOutcome.FAILED);
+		assertThat(result.getOutput()).contains("not compatible with buildpacks");
+	}
+
+	@TestTemplate
 	void failsWithBuilderError() {
 		writeMainClass();
 		writeLongNameResource();
@@ -143,6 +176,15 @@ class BootBuildImageIntegrationTests {
 		assertThat(result.task(":bootBuildImage").getOutcome()).isEqualTo(TaskOutcome.FAILED);
 		assertThat(result.getOutput()).containsPattern("Unable to parse image reference")
 				.containsPattern("example/Invalid-Image-Name");
+	}
+
+	@TestTemplate
+	void failsWithPublishMissingPublishRegistry() {
+		writeMainClass();
+		writeLongNameResource();
+		BuildResult result = this.gradleBuild.buildAndFail("bootBuildImage", "--publishImage");
+		assertThat(result.task(":bootBuildImage").getOutcome()).isEqualTo(TaskOutcome.FAILED);
+		assertThat(result.getOutput()).contains("requires docker.publishRegistry");
 	}
 
 	private void writeMainClass() {

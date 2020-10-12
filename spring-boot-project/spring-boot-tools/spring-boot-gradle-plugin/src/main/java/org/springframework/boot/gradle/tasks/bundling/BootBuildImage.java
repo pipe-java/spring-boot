@@ -20,20 +20,26 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
+import groovy.lang.Closure;
+import org.gradle.api.Action;
 import org.gradle.api.DefaultTask;
+import org.gradle.api.GradleException;
 import org.gradle.api.JavaVersion;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
+import org.gradle.api.tasks.Nested;
 import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.api.tasks.options.Option;
+import org.gradle.util.ConfigureUtil;
 
 import org.springframework.boot.buildpack.platform.build.BuildRequest;
 import org.springframework.boot.buildpack.platform.build.Builder;
 import org.springframework.boot.buildpack.platform.build.Creator;
+import org.springframework.boot.buildpack.platform.build.PullPolicy;
 import org.springframework.boot.buildpack.platform.docker.transport.DockerEngineException;
 import org.springframework.boot.buildpack.platform.docker.type.ImageName;
 import org.springframework.boot.buildpack.platform.docker.type.ImageReference;
@@ -68,6 +74,12 @@ public class BootBuildImage extends DefaultTask {
 	private boolean cleanCache;
 
 	private boolean verboseLogging;
+
+	private PullPolicy pullPolicy;
+
+	private boolean publish;
+
+	private DockerSpec docker = new DockerSpec();
 
 	public BootBuildImage() {
 		this.jar = getProject().getObjects().fileProperty();
@@ -224,9 +236,74 @@ public class BootBuildImage extends DefaultTask {
 		this.verboseLogging = verboseLogging;
 	}
 
+	/**
+	 * Returns image pull policy that will be used when building the image.
+	 * @return whether images should be pulled
+	 */
+	@Input
+	@Optional
+	public PullPolicy getPullPolicy() {
+		return this.pullPolicy;
+	}
+
+	/**
+	 * Sets image pull policy that will be used when building the image.
+	 * @param pullPolicy image pull policy {@link PullPolicy}
+	 */
+	@Option(option = "pullPolicy", description = "The image pull policy")
+	public void setPullPolicy(PullPolicy pullPolicy) {
+		this.pullPolicy = pullPolicy;
+	}
+
+	/**
+	 * Whether the built image should be pushed to a registry.
+	 * @return whether the built image should be pushed
+	 */
+	@Input
+	public boolean isPublish() {
+		return this.publish;
+	}
+
+	/**
+	 * Sets whether the built image should be pushed to a registry.
+	 * @param publish {@code true} the push the built image to a registry. {@code false}.
+	 */
+	@Option(option = "publishImage", description = "Publish the built image to a registry")
+	public void setPublish(boolean publish) {
+		this.publish = publish;
+	}
+
+	/**
+	 * Returns the Docker configuration the builder will use.
+	 * @return docker configuration.
+	 * @since 2.4.0
+	 */
+	@Nested
+	public DockerSpec getDocker() {
+		return this.docker;
+	}
+
+	/**
+	 * Configures the Docker connection using the given {@code action}.
+	 * @param action the action to apply
+	 * @since 2.4.0
+	 */
+	public void docker(Action<DockerSpec> action) {
+		action.execute(this.docker);
+	}
+
+	/**
+	 * Configures the Docker connection using the given {@code closure}.
+	 * @param closure the closure to apply
+	 * @since 2.4.0
+	 */
+	public void docker(Closure<?> closure) {
+		docker(ConfigureUtil.configureUsing(closure));
+	}
+
 	@TaskAction
 	void buildImage() throws DockerEngineException, IOException {
-		Builder builder = new Builder();
+		Builder builder = new Builder(this.docker.asDockerConfiguration());
 		BuildRequest request = createRequest();
 		builder.build(request);
 	}
@@ -255,6 +332,8 @@ public class BootBuildImage extends DefaultTask {
 		request = customizeCreator(request);
 		request = request.withCleanCache(this.cleanCache);
 		request = request.withVerboseLogging(this.verboseLogging);
+		request = customizePullPolicy(request);
+		request = customizePublish(request);
 		return request;
 	}
 
@@ -287,6 +366,23 @@ public class BootBuildImage extends DefaultTask {
 		if (StringUtils.hasText(springBootVersion)) {
 			return request.withCreator(Creator.withVersion(springBootVersion));
 		}
+		return request;
+	}
+
+	private BuildRequest customizePullPolicy(BuildRequest request) {
+		if (this.pullPolicy != null) {
+			request = request.withPullPolicy(this.pullPolicy);
+		}
+		return request;
+	}
+
+	private BuildRequest customizePublish(BuildRequest request) {
+		boolean publishRegistryAuthNotConfigured = this.docker == null || this.docker.getPublishRegistry() == null
+				|| this.docker.getPublishRegistry().hasEmptyAuth();
+		if (this.publish && publishRegistryAuthNotConfigured) {
+			throw new GradleException("Publishing an image requires docker.publishRegistry to be configured");
+		}
+		request = request.withPublish(this.publish);
 		return request;
 	}
 

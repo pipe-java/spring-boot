@@ -22,6 +22,7 @@ import java.util.function.Function;
 import org.apache.maven.artifact.Artifact;
 
 import org.springframework.boot.buildpack.platform.build.BuildRequest;
+import org.springframework.boot.buildpack.platform.build.PullPolicy;
 import org.springframework.boot.buildpack.platform.docker.type.ImageName;
 import org.springframework.boot.buildpack.platform.docker.type.ImageReference;
 import org.springframework.boot.buildpack.platform.io.Owner;
@@ -67,6 +68,16 @@ public class Image {
 	 */
 	boolean verboseLogging;
 
+	/**
+	 * If images should be pulled from a remote repository during image build.
+	 */
+	PullPolicy pullPolicy;
+
+	/**
+	 * If the built image should be pushed to a registry.
+	 */
+	Boolean publish;
+
 	void setName(String name) {
 		this.name = name;
 	}
@@ -77,6 +88,14 @@ public class Image {
 
 	void setRunImage(String runImage) {
 		this.runImage = runImage;
+	}
+
+	public void setPullPolicy(PullPolicy pullPolicy) {
+		this.pullPolicy = pullPolicy;
+	}
+
+	public void setPublish(Boolean publish) {
+		this.publish = publish;
 	}
 
 	BuildRequest getBuildRequest(Artifact artifact, Function<Owner, TarArchive> applicationContent) {
@@ -103,6 +122,12 @@ public class Image {
 		}
 		request = request.withCleanCache(this.cleanCache);
 		request = request.withVerboseLogging(this.verboseLogging);
+		if (this.pullPolicy != null) {
+			request = request.withPullPolicy(this.pullPolicy);
+		}
+		if (this.publish != null) {
+			request = request.withPublish(this.publish);
+		}
 		return request;
 	}
 

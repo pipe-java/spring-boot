@@ -22,15 +22,16 @@ import java.util.concurrent.Callable;
 
 import org.gradle.api.Action;
 import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.ResolvableDependencies;
 import org.gradle.api.file.CopySpec;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.FileCopyDetails;
 import org.gradle.api.file.FileTreeElement;
 import org.gradle.api.internal.file.copy.CopyAction;
+import org.gradle.api.provider.Property;
 import org.gradle.api.specs.Spec;
 import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.Nested;
-import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.bundling.Jar;
 
 /**
@@ -54,15 +55,17 @@ public class BootJar extends Jar implements BootArchive {
 
 	private static final String CLASSPATH_INDEX = "BOOT-INF/classpath.idx";
 
+	private final ResolvedDependencies resolvedDependencies = new ResolvedDependencies();
+
 	private final BootArchiveSupport support;
 
 	private final CopySpec bootInfSpec;
 
-	private String mainClassName;
+	private final Property<String> mainClass;
 
 	private FileCollection classpath;
 
-	private LayeredSpec layered;
+	private LayeredSpec layered = new LayeredSpec();
 
 	/**
 	 * Creates a new {@code BootJar} task.
@@ -70,8 +73,14 @@ public class BootJar extends Jar implements BootArchive {
 	public BootJar() {
 		this.support = new BootArchiveSupport(LAUNCHER, this::isLibrary, this::resolveZipCompression);
 		this.bootInfSpec = getProject().copySpec().into("BOOT-INF");
+		this.mainClass = getProject().getObjects().property(String.class);
 		configureBootInfSpec(this.bootInfSpec);
 		getMainSpec().with(this.bootInfSpec);
+		getProject().getConfigurations().all((configuration) -> {
+			ResolvableDependencies incoming = configuration.getIncoming();
+			incoming.afterResolve(
+					(resolvableDependencies) -> this.resolvedDependencies.processConfiguration(configuration));
+		});
 	}
 
 	private void configureBootInfSpec(CopySpec bootInfSpec) {
@@ -95,15 +104,19 @@ public class BootJar extends Jar implements BootArchive {
 
 	@Override
 	public void copy() {
-		this.support.configureManifest(getManifest(), getMainClassName(), CLASSES_DIRECTORY, LIB_DIRECTORY,
-				CLASSPATH_INDEX, (this.layered != null) ? LAYERS_INDEX : null);
+		this.support.configureManifest(getManifest(), getMainClass().get(), CLASSES_DIRECTORY, LIB_DIRECTORY,
+				CLASSPATH_INDEX, (isLayeredDisabled()) ? null : LAYERS_INDEX);
 		super.copy();
+	}
+
+	private boolean isLayeredDisabled() {
+		return this.layered != null && !this.layered.isEnabled();
 	}
 
 	@Override
 	protected CopyAction createCopyAction() {
-		if (this.layered != null) {
-			LayerResolver layerResolver = new LayerResolver(getConfigurations(), this.layered, this::isLibrary);
+		if (!isLayeredDisabled()) {
+			LayerResolver layerResolver = new LayerResolver(this.resolvedDependencies, this.layered, this::isLibrary);
 			String layerToolsLocation = this.layered.isIncludeLayerTools() ? LIB_DIRECTORY : null;
 			return this.support.createCopyAction(this, layerResolver, layerToolsLocation);
 		}
@@ -116,19 +129,20 @@ public class BootJar extends Jar implements BootArchive {
 	}
 
 	@Override
-	public String getMainClassName() {
-		if (this.mainClassName == null) {
-			String manifestStartClass = (String) getManifest().getAttributes().get("Start-Class");
-			if (manifestStartClass != null) {
-				setMainClassName(manifestStartClass);
-			}
-		}
-		return this.mainClassName;
+	public Property<String> getMainClass() {
+		return this.mainClass;
 	}
 
 	@Override
+	@Deprecated
+	public String getMainClassName() {
+		return this.mainClass.getOrNull();
+	}
+
+	@Override
+	@Deprecated
 	public void setMainClassName(String mainClassName) {
-		this.mainClassName = mainClassName;
+		this.mainClass.set(mainClassName);
 	}
 
 	@Override
@@ -157,12 +171,11 @@ public class BootJar extends Jar implements BootArchive {
 	}
 
 	/**
-	 * Returns the spec that describes the layers in a layerd jar.
-	 * @return the spec for the layers or {@code null}.
+	 * Returns the spec that describes the layers in a layered jar.
+	 * @return the spec for the layers
 	 * @since 2.3.0
 	 */
 	@Nested
-	@Optional
 	public LayeredSpec getLayered() {
 		return this.layered;
 	}
@@ -170,19 +183,19 @@ public class BootJar extends Jar implements BootArchive {
 	/**
 	 * Configures the jar to be layered using the default layering.
 	 * @since 2.3.0
+	 * @deprecated since 2.4.0 as layering as now enabled by default.
 	 */
+	@Deprecated
 	public void layered() {
-		enableLayeringIfNecessary();
 	}
 
 	/**
-	 * Configures the jar to be layered, customizing the layers using the given
-	 * {@code action}.
+	 * Configures the jar's layering using the given {@code action}.
 	 * @param action the action to apply
 	 * @since 2.3.0
 	 */
 	public void layered(Action<LayeredSpec> action) {
-		action.execute(enableLayeringIfNecessary());
+		action.execute(this.layered);
 	}
 
 	@Override
@@ -279,13 +292,6 @@ public class BootJar extends Jar implements BootArchive {
 		return launchScript;
 	}
 
-	private LayeredSpec enableLayeringIfNecessary() {
-		if (this.layered == null) {
-			this.layered = new LayeredSpec();
-		}
-		return this.layered;
-	}
-
 	/**
 	 * Syntactic sugar that makes {@link CopySpec#into} calls a little easier to read.
 	 * @param <T> the result type
@@ -304,6 +310,11 @@ public class BootJar extends Jar implements BootArchive {
 	 */
 	private static <T> Callable<T> callTo(Callable<T> callable) {
 		return callable;
+	}
+
+	@Internal
+	ResolvedDependencies getResolvedDependencies() {
+		return this.resolvedDependencies;
 	}
 
 }

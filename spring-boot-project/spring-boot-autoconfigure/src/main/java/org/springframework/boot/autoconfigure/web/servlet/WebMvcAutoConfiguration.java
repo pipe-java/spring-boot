@@ -56,6 +56,7 @@ import org.springframework.boot.autoconfigure.web.format.WebConversionService;
 import org.springframework.boot.autoconfigure.web.servlet.WebMvcProperties.Format;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.convert.ApplicationConversionService;
+import org.springframework.boot.web.servlet.ServletRegistrationBean;
 import org.springframework.boot.web.servlet.filter.OrderedFormContentFilter;
 import org.springframework.boot.web.servlet.filter.OrderedHiddenHttpMethodFilter;
 import org.springframework.boot.web.servlet.filter.OrderedRequestContextFilter;
@@ -110,7 +111,6 @@ import org.springframework.web.servlet.i18n.FixedLocaleResolver;
 import org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
-import org.springframework.web.servlet.resource.AppCacheManifestTransformer;
 import org.springframework.web.servlet.resource.EncodedResourceResolver;
 import org.springframework.web.servlet.resource.ResourceResolver;
 import org.springframework.web.servlet.resource.ResourceUrlProvider;
@@ -119,6 +119,7 @@ import org.springframework.web.servlet.view.BeanNameViewResolver;
 import org.springframework.web.servlet.view.ContentNegotiatingViewResolver;
 import org.springframework.web.servlet.view.InternalResourceViewResolver;
 import org.springframework.web.util.UrlPathHelper;
+import org.springframework.web.util.pattern.PathPatternParser;
 
 /**
  * {@link EnableAutoConfiguration Auto-configuration} for {@link EnableWebMvc Web MVC}.
@@ -190,18 +191,23 @@ public class WebMvcAutoConfiguration {
 
 		private final ObjectProvider<DispatcherServletPath> dispatcherServletPath;
 
+		private final ObjectProvider<ServletRegistrationBean<?>> servletRegistrations;
+
 		final ResourceHandlerRegistrationCustomizer resourceHandlerRegistrationCustomizer;
 
 		public WebMvcAutoConfigurationAdapter(ResourceProperties resourceProperties, WebMvcProperties mvcProperties,
 				ListableBeanFactory beanFactory, ObjectProvider<HttpMessageConverters> messageConvertersProvider,
 				ObjectProvider<ResourceHandlerRegistrationCustomizer> resourceHandlerRegistrationCustomizerProvider,
-				ObjectProvider<DispatcherServletPath> dispatcherServletPath) {
+				ObjectProvider<DispatcherServletPath> dispatcherServletPath,
+				ObjectProvider<ServletRegistrationBean<?>> servletRegistrations) {
 			this.resourceProperties = resourceProperties;
 			this.mvcProperties = mvcProperties;
 			this.beanFactory = beanFactory;
 			this.messageConvertersProvider = messageConvertersProvider;
 			this.resourceHandlerRegistrationCustomizer = resourceHandlerRegistrationCustomizerProvider.getIfAvailable();
 			this.dispatcherServletPath = dispatcherServletPath;
+			this.servletRegistrations = servletRegistrations;
+			this.mvcProperties.checkConfiguration();
 		}
 
 		@Override
@@ -228,17 +234,26 @@ public class WebMvcAutoConfiguration {
 		@Override
 		@SuppressWarnings("deprecation")
 		public void configurePathMatch(PathMatchConfigurer configurer) {
+			if (this.mvcProperties.getPathmatch()
+					.getMatchingStrategy() == WebMvcProperties.MatchingStrategy.PATH_PATTERN_PARSER) {
+				configurer.setPatternParser(new PathPatternParser());
+			}
 			configurer.setUseSuffixPatternMatch(this.mvcProperties.getPathmatch().isUseSuffixPattern());
 			configurer.setUseRegisteredSuffixPatternMatch(
 					this.mvcProperties.getPathmatch().isUseRegisteredSuffixPattern());
 			this.dispatcherServletPath.ifAvailable((dispatcherPath) -> {
 				String servletUrlMapping = dispatcherPath.getServletUrlMapping();
-				if (servletUrlMapping.equals("/")) {
+				if (servletUrlMapping.equals("/") && singleDispatcherServlet()) {
 					UrlPathHelper urlPathHelper = new UrlPathHelper();
 					urlPathHelper.setAlwaysUseFullPath(true);
 					configurer.setUrlPathHelper(urlPathHelper);
 				}
 			});
+		}
+
+		private boolean singleDispatcherServlet() {
+			return this.servletRegistrations.stream().map(ServletRegistrationBean::getServlet)
+					.filter(DispatcherServlet.class::isInstance).count() == 1;
 		}
 
 		@Override
@@ -548,6 +563,7 @@ public class WebMvcAutoConfiguration {
 			configureResourceChain(properties, registration.resourceChain(properties.isCache()));
 		}
 
+		@SuppressWarnings("deprecation")
 		private void configureResourceChain(ResourceProperties.Chain properties, ResourceChainRegistration chain) {
 			Strategy strategy = properties.getStrategy();
 			if (properties.isCompressed()) {
@@ -557,7 +573,7 @@ public class WebMvcAutoConfiguration {
 				chain.addResolver(getVersionResourceResolver(strategy));
 			}
 			if (properties.isHtmlApplicationCache()) {
-				chain.addTransformer(new AppCacheManifestTransformer());
+				chain.addTransformer(new org.springframework.web.servlet.resource.AppCacheManifestTransformer());
 			}
 		}
 
